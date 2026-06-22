@@ -1,0 +1,204 @@
+// Schéma de base de données SellThem — prêt à brancher (Postgres / Supabase).
+// La couche de données actuelle est mockée (src/lib/data.ts) ; ce schéma
+// servira lors de l'étape « backend réel » (auth, annonces, messagerie, paiement).
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Condition {
+  NEW_WITH_TAGS
+  NEW_WITHOUT_TAGS
+  VERY_GOOD
+  GOOD
+  SATISFACTORY
+}
+
+enum Category {
+  WOMEN
+  MEN
+  KIDS
+  HOME
+  ELECTRONICS
+  BEAUTY
+  SPORTS
+  BOOKS
+  TOYS
+  OTHER
+}
+
+enum ListingStatus {
+  DRAFT
+  ACTIVE
+  RESERVED
+  SOLD
+  REMOVED
+}
+
+enum OrderStatus {
+  PENDING
+  PAID
+  SHIPPED
+  DELIVERED
+  COMPLETED
+  CANCELLED
+  REFUNDED
+}
+
+model User {
+  id            String    @id @default(cuid())
+  email         String    @unique
+  passwordHash  String?
+  name          String
+  avatar        String?
+  city          String?
+  locale        String    @default("fr")
+  role          String    @default("USER") // USER | ADMIN
+  banned        Boolean   @default(false)
+  rating        Float     @default(0)
+  reviewsCount  Int       @default(0)
+  createdAt     DateTime  @default(now())
+
+  listings      Listing[]
+  favorites     Favorite[]
+  reviews       Review[]  @relation("ReviewsReceived")
+  reviewsGiven  Review[]  @relation("ReviewsGiven")
+  sentMessages  Message[]
+  purchases     Order[]   @relation("Buyer")
+  sales         Order[]   @relation("Seller")
+}
+
+model Listing {
+  id          String        @id @default(cuid())
+  title       String
+  description String        @default("")
+  price       Int           // en agorot (1 ₪ = 100) ou en shekels entiers selon implémentation
+  brand       String?
+  size        String?
+  color       String?
+  subcategory String?
+  category    Category
+  condition   Condition
+  images      String[]
+  status      ListingStatus @default(ACTIVE)
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  sellerId    String
+  seller      User          @relation(fields: [sellerId], references: [id], onDelete: Cascade)
+  favorites   Favorite[]
+  order       Order?
+
+  @@index([category, status])
+  @@index([sellerId])
+}
+
+model Favorite {
+  id        String   @id @default(cuid())
+  userId    String
+  listingId String
+  createdAt DateTime @default(now())
+
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  listing   Listing  @relation(fields: [listingId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, listingId])
+}
+
+model Conversation {
+  id         String    @id @default(cuid())
+  listingId  String
+  buyerId    String
+  sellerId   String
+  createdAt  DateTime  @default(now())
+  messages   Message[]
+
+  @@unique([listingId, buyerId])
+}
+
+model Message {
+  id             String       @id @default(cuid())
+  conversationId String
+  senderId       String
+  text           String       @default("")
+  kind           String       @default("TEXT") // TEXT | OFFER
+  amount         Int? // montant de l'offre (en ₪) si kind = OFFER
+  status         String? // PENDING | ACCEPTED | DECLINED (pour les offres)
+  readAt         DateTime?
+  createdAt      DateTime     @default(now())
+
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  sender         User         @relation(fields: [senderId], references: [id])
+
+  @@index([conversationId])
+}
+
+model Order {
+  id          String      @id @default(cuid())
+  listingId   String      @unique
+  buyerId     String
+  sellerId    String
+  amount      Int
+  shippingFee Int         @default(0)
+  status      OrderStatus @default(PENDING)
+  createdAt   DateTime    @default(now())
+
+  listing     Listing     @relation(fields: [listingId], references: [id])
+  buyer       User        @relation("Buyer", fields: [buyerId], references: [id])
+  seller      User        @relation("Seller", fields: [sellerId], references: [id])
+}
+
+model Follow {
+  id         String   @id @default(cuid())
+  followerId String
+  followeeId String
+  createdAt  DateTime @default(now())
+
+  @@unique([followerId, followeeId])
+  @@index([followeeId])
+}
+
+model PushSubscription {
+  id        String   @id @default(cuid())
+  userId    String
+  endpoint  String   @unique
+  p256dh    String
+  auth      String
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+}
+
+model Report {
+  id         String   @id @default(cuid())
+  type       String // LISTING | USER
+  targetId   String
+  reporterId String
+  reason     String
+  status     String   @default("OPEN") // OPEN | RESOLVED
+  createdAt  DateTime @default(now())
+
+  @@index([status])
+}
+
+model Review {
+  id         String   @id @default(cuid())
+  orderId    String?
+  conversationId String?
+  authorId   String
+  targetId   String
+  targetRole String   @default("SELLER") // SELLER | BUYER (rôle de la personne notée)
+  rating     Int
+  comment    String?
+  createdAt  DateTime @default(now())
+
+  author     User     @relation("ReviewsGiven", fields: [authorId], references: [id])
+  target     User     @relation("ReviewsReceived", fields: [targetId], references: [id])
+
+  @@unique([authorId, targetId])
+}
